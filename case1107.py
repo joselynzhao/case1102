@@ -76,7 +76,7 @@ data_path = {
 @click.option("--which_camera", type=str, default='mode')  # init, opt,modeS
 @click.option("--adv", type=float, default=0.05)
 @click.option("--tensorboard", type=bool, default=True)
-@click.option("--outdir", type=str, default='./output/case1020_trunc075/debug')
+@click.option("--outdir", type=str, default='./output/case1107/debug')
 @click.option("--resume", type=bool, default=False)  # true则进行resume
 def main(outdir, g_ckpt, e_ckpt,
          max_steps, batch, lr, local_rank, lambda_w, lambda_c,mapping_way,
@@ -203,13 +203,10 @@ def main(outdir, g_ckpt, e_ckpt,
         camera_views = camera_matrices[2][:,:2].to(device)  # first two
         # print(camera_views)
         rec_ws, _ = E(img)
-        # rec_ws += ws_avg
-        gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices= camera_matrices)  #
-        # mapping_w = M(rec_ws.detach(), camera_views)
         mapping_w = M(rec_ws, camera_views)
         mapping_w += ws_avg
+        gen_img = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)  #
         loss_dict['loss_w'] = F.smooth_l1_loss(mapping_w, gt_w).mean() * lambda_w
-        # define loss
         loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
         # loss_dict['img1_l2'] = F.mse_loss(gen_img1, img_1) * lambda_l2
