@@ -94,7 +94,8 @@ def main(outdir, g_ckpt, e_ckpt,
     # num_gpus = torch.cuda.device_count()  # 自动获取显卡数量
     num_gpus = 1
     conv2d_gradfix.enabled = True  # Improves training speed.
-    device = torch.device('cuda', local_rank)
+    # device = torch.device('cuda', local_rank)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # torch.set_default_tensor_type(torch.DoubleTensor)
 
     # load the pre-trained model

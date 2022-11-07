@@ -92,7 +92,8 @@ def generate_images(
 
     num_gpus = 1  # 自动获取显卡数量
     conv2d_gradfix.enabled = True  # Improves training speed.
-    device = torch.device('cuda')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # device = torch.device('cuda')
 
 
     # store_dir = os.path.join(f'./output/test_encoders/In_testset/Group_{group_name}')  # 用于服务器测试

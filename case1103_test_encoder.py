@@ -152,8 +152,8 @@ def generate_images(
         sep_ws += ws_avg
         gen_img_Sep = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices)
 
-        if w is not None:
-            gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
+        # if w is not None:
+        #     gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
 
 
         from torchvision import utils
