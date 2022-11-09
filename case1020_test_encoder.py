@@ -148,7 +148,6 @@ def generate_images(
             # w +=ws_avg
 
 
-
         rec_ws, _ = E(img)
         # rec_ws += ws_avg
         gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)
@@ -156,8 +155,8 @@ def generate_images(
         mapping_w = M(rec_ws, camera_views)
         mapping_w+=ws_avg
         gen_img_MappingNet = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)
-        if w is not None:
-            gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
+        # if w is not None:
+        #     gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
 
 
         from torchvision import utils

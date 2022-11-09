@@ -146,8 +146,8 @@ def generate_images(
         rec_ws, _ = E(img)
         # rec_ws += ws_avg
         gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)
-        if w is not None:
-            gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
+        # if w is not None:
+        #     gen_img_w = G.get_final_output(styles=w, camera_matrices=camera_matrices)
 
 
         from torchvision import utils
