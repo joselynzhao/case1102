@@ -73,6 +73,7 @@ data_path = {
 @click.option("--lambda_img", type=float, default=1.0)
 @click.option("--lambda_l2", type=float, default=1.0)
 @click.option("--which_c", type=str, default='p2')  # encoder attr
+@click.option("--which_data", type=int, default=1)  # 1: trunc075    2:mvmc+trunc075
 @click.option("--which_camera", type=str, default='mode')  # init, opt,modeS
 @click.option("--adv", type=float, default=0.05)
 @click.option("--tensorboard", type=bool, default=True)
@@ -80,7 +81,7 @@ data_path = {
 @click.option("--resume", type=bool, default=False)  # true则进行resume
 def main(outdir, g_ckpt, e_ckpt,
          max_steps, batch, lr, local_rank, lambda_w, lambda_c,mapping_way,
-         lambda_img, lambda_l2, which_c, adv, tensorboard, resume, which_server,which_camera):
+         lambda_img, lambda_l2, which_c, adv, tensorboard, resume, which_server,which_camera,which_data):
     # local_rank = rank
     # setup(rank, word_size)
     # options_list = click.option()
@@ -96,12 +97,6 @@ def main(outdir, g_ckpt, e_ckpt,
     conv2d_gradfix.enabled = True  # Improves training speed.
     # device = torch.device('cuda', local_rank)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # torch.set_default_tensor_type(torch.DoubleTensor)
-
-    # load the pre-trained model
-    # if os.path.isdir(g_ckpt):  #基本模型信息
-    #     import glob
-    #     g_ckpt = sorted(glob.glob(g_ckpt + '/*.pkl'))[-1]
 
     if resume:
         pkls_path = os.path.join(outdir, 'checkpoints')
@@ -135,21 +130,11 @@ def main(outdir, g_ckpt, e_ckpt,
 
         from training.networks import Mapping_ws
         M = Mapping_ws(17,mapping_way=mapping_way,device=device).to(device)
-        # print(M)
-    # print(M)
-    # return
-        # if num_gpus >1:
-        #    E = DDP(E, device_ids=[rank], output_device=rank, find_unused_parameters=True) # broadcast_buffers=False
-
-    # E_optim = optim.Adam(E.parameters(), lr=lr*0.1, betas=(0.9, 0.99))
 
     # print(G)
     # print(E)
     params = list(E.parameters())
-    # fg_net = G.synthesis.fg_nerf.My_embedding_fg
-    #
-    # bg_net = G.synthesis.bg_nerf
-    # params += list(fg_net.parameters())
+
     params += list(M.parameters())
     # params+= list(bg_net.parameters())
     E_optim = optim.Adam(params, lr=lr, betas=(0.9, 0.99))
@@ -157,19 +142,7 @@ def main(outdir, g_ckpt, e_ckpt,
     E.requires_grad_(True)
     # fg_net.requires_grad_(True)
     M.requires_grad_(True)
-    # requires_grad(bg_net, True)
 
-    # uvr =np.array([0.15,0.5,0.5])
-    # uvr =torch.from_numpy(uvr).to(device)
-    # uvr = uvr.squeeze(0)
-    # uvr = uvr.repeat(batch,1)
-    # print(uvr)
-
-    # camera_info = G.synthesis.get_camera(batch, device=device, mode=uvr,fov=60.0)
-    # print("camera_info:", camera_info)
-
-
-    # load the dataset
     # data_dir = os.path.join(data, 'images')
     from torch_utils import misc
     training_set_kwargs = dict(class_name='training.dataset.ImageFolderDataset_psp_case1', path=data1, use_labels=False,
@@ -184,19 +157,18 @@ def main(outdir, g_ckpt, e_ckpt,
     print('Num images: ', len(training_set))
     print('Image shape:', training_set.image_shape)
 
-    training_set_kwargs2 = dict(class_name='training.dataset.ImageFolderDataset_mvmc_zj', path=data2, use_labels=False,
-                               xflip=True,which_camera=which_camera)
-    data_loader_kwargs2 = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
-    training_set2 = dnnlib.util.construct_class_by_name(**training_set_kwargs2)
-    training_set_sampler2 = misc.InfiniteSampler(dataset=training_set2, rank=local_rank, num_replicas=num_gpus,
-                                                seed=random_seed)  # for now, single GPU first.
-    training_set_iterator2 = torch.utils.data.DataLoader(dataset=training_set2, sampler=training_set_sampler2,
-                                                        batch_size=batch // num_gpus, **data_loader_kwargs2)
-    training_set_iterator2 = iter(training_set_iterator2)
-    print('Num images: ', len(training_set2))
-    print('Image shape:', training_set2.image_shape)
-    if which_camera=='mode':
-        print("mvmc dataset training with mode!")
+    if which_data ==2:
+        training_set_kwargs2 = dict(class_name='training.dataset.ImageFolderDataset_mvmc_zj', path=data2, use_labels=False,
+                                   xflip=True,which_camera=which_camera)
+        data_loader_kwargs2 = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
+        training_set2 = dnnlib.util.construct_class_by_name(**training_set_kwargs2)
+        training_set_sampler2 = misc.InfiniteSampler(dataset=training_set2, rank=local_rank, num_replicas=num_gpus,
+                                                    seed=random_seed)  # for now, single GPU first.
+        training_set_iterator2 = torch.utils.data.DataLoader(dataset=training_set2, sampler=training_set_sampler2,
+                                                            batch_size=batch // num_gpus, **data_loader_kwargs2)
+        training_set_iterator2 = iter(training_set_iterator2)
+        print('Num images: ', len(training_set2))
+        print('Image shape:', training_set2.image_shape)
 
     start_iter = 0
     if resume:
@@ -210,53 +182,67 @@ def main(outdir, g_ckpt, e_ckpt,
     truncation = 0.5  # 固定的
     ws_avg = G.mapping.w_avg[None, None, :]
 
-    if SummaryWriter and tensorboard:
-        logger = SummaryWriter(logdir='./checkpoint')
-
     for idx in pbar:
         i = idx + start_iter
         if i > max_steps:
             print("Done!")
             break
-        use_dataset = 1 if i%2==0 else 2
-
         E_optim.zero_grad()  # zero-out gradients
-        if use_dataset==1:
-            # print("using dataset 1")
+
+        if which_data ==1:
             img, _, camera, _, gt_w = next(training_set_iterator)
             img = img.to(device).to(torch.float32) / 127.5 - 1
             gt_w = gt_w.to(device).to(torch.float32)
             camera_matrices = get_camera_metrices(camera, device)
-            camera_views = camera_matrices[2][:,:2].to(device)  # first two
+            camera_views = camera_matrices[2][:, :2].to(device)  # first two
             # print(camera_views)
             rec_ws, _ = E(img)
             # rec_ws += ws_avg
-            gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices= camera_matrices)  #
-            mapping_w = M(rec_ws.detach(), camera_views)
+            gen_img = G.get_final_output(styles=rec_ws + ws_avg, camera_matrices=camera_matrices)  #
+            # mapping_w = M(rec_ws.detach(), camera_views)
+            mapping_w = M(rec_ws, camera_views)
             mapping_w += ws_avg
             loss_dict['loss_w'] = F.smooth_l1_loss(mapping_w, gt_w).mean() * lambda_w
+            loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
         else:
-            # print("using dataset 2")
-            img,_,camera,_ = next(training_set_iterator2)
-            img = img.to(device).to(torch.float32) / 127.5 - 1
-            # camera_mat = camera['camera_0'].to(device)
-            # world_mat = camera['camera_1'].to(device)
-            camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
-            # world_mat = torch.clamp(world_mat, min=-0.9999, max=0.9999)  # nothing works
-            camera_views[:,1]=0.5# first two
-            # world_mat[:,2,0] = 0
-            camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
+            use_dataset = 1 if i%2==0 else 2
+            if use_dataset==1:
+                # print("using dataset 1")
+                img, _, camera, _, gt_w = next(training_set_iterator)
+                img = img.to(device).to(torch.float32) / 127.5 - 1
+                gt_w = gt_w.to(device).to(torch.float32)
+                camera_matrices = get_camera_metrices(camera, device)
+                camera_views = camera_matrices[2][:,:2].to(device)  # first two
+                # print(camera_views)
+                rec_ws, _ = E(img)
+                # rec_ws += ws_avg
+                gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices= camera_matrices)  #
+                mapping_w = M(rec_ws.detach(), camera_views)
+                mapping_w += ws_avg
+                loss_dict['loss_w'] = F.smooth_l1_loss(mapping_w, gt_w).mean() * lambda_w
 
-            rec_ws, _ = E(img)
-            rec_ws += ws_avg
-            # camera_matrices = camera_info if which_camera=='mode' else (camera_mat,world_mat,camera_views,None)
-            gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_info)  #
-            # print(gen_img)
-            loss_dict['loss_w'] = F.smooth_l1_loss(rec_ws, rec_ws).mean() * lambda_w
+            else:
+                # print("using dataset 2")
+                img,_,camera,_ = next(training_set_iterator2)
+                img = img.to(device).to(torch.float32) / 127.5 - 1
+                # camera_mat = camera['camera_0'].to(device)
+                # world_mat = camera['camera_1'].to(device)
+                camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
+                # world_mat = torch.clamp(world_mat, min=-0.9999, max=0.9999)  # nothing works
+                camera_views[:,1]=0.5# first two
+                # world_mat[:,2,0] = 0
+                camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
 
-        # define loss
-        loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
+                rec_ws, _ = E(img)
+                rec_ws += ws_avg
+                # camera_matrices = camera_info if which_camera=='mode' else (camera_mat,world_mat,camera_views,None)
+                gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_info)  #
+                # print(gen_img)
+                loss_dict['loss_w'] = F.smooth_l1_loss(rec_ws, rec_ws).mean() * lambda_w
+
+            # define loss
+            loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
         # loss_dict['img1_l2'] = F.mse_loss(gen_img1, img_1) * lambda_l2
         # loss_dict['img2_l2'] = F.mse_loss(gen_img2, img_2) * lambda_l2
@@ -268,12 +254,6 @@ def main(outdir, g_ckpt, e_ckpt,
 
         desp = '\t'.join([f'{name}: {loss_dict[name].item():.4f}' for name in loss_dict])
         pbar.set_description((desp))
-
-        if SummaryWriter and tensorboard:
-            logger.add_scalar('E_loss/total', e_loss_val, i)
-            # logger.add_scalar('E_loss/vgg', vgg_loss_val, i)
-            # logger.add_scalar('E_loss/l2', l2_loss_val, i)
-            # logger.add_scalar('E_loss/adv', adv_loss_val, i)
 
         if i % 100 == 0 or (i-1) % 100 == 0:
             os.makedirs(f'{outdir}/sample', exist_ok=True)
@@ -302,8 +282,6 @@ def main(outdir, g_ckpt, e_ckpt,
             # snapshot_data2['G'] = G  # 需要把G保存下来
             with open(snapshot_pkl, 'wb') as f:
                 pickle.dump(snapshot_data, f)
-    logger.close()
-    # cleanup()
 
 
 if __name__ == "__main__":
