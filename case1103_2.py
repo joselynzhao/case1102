@@ -77,7 +77,7 @@ data_path = {
 @click.option("--which_camera", type=str, default='mode')  # init, opt,modeS
 @click.option("--adv", type=float, default=0.05)
 @click.option("--tensorboard", type=bool, default=True)
-@click.option("--outdir", type=str, default='./output/case1103/debug')
+@click.option("--outdir", type=str, default='./output/case1103_2/debug')
 @click.option("--resume", type=bool, default=False)  # true则进行resume
 def main(outdir, g_ckpt, e_ckpt,
          max_steps, batch, lr, local_rank, lambda_w, lambda_c,mapping_way,
@@ -98,10 +98,18 @@ def main(outdir, g_ckpt, e_ckpt,
     device = torch.device('cuda', local_rank)
     # torch.set_default_tensor_type(torch.DoubleTensor)
 
-    # load the pre-trained model
-    # if os.path.isdir(g_ckpt):  #基本模型信息
-    #     import glob
-    #     g_ckpt = sorted(glob.glob(g_ckpt + '/*.pkl'))[-1]
+    print('Loading networks from "%s"...' % g_ckpt)
+    with dnnlib.util.open_url(g_ckpt) as fp:
+        network = legacy.load_network_pkl(fp)
+        G = network['G_ema'].requires_grad_(False).to(device)
+    from training.networks import Generator
+    from torch_utils import misc
+    with torch.no_grad():
+        # if 'insert_layer' not in G.init_kwargs.synthesis_kwargs:  # add new attributions
+        #     G.init_kwargs.synthesis_kwargs['insert_layer'] = insert_layer
+        G2 = Generator(*G.init_args, **G.init_kwargs).to(device)
+        misc.copy_params_and_buffers(G, G2, require_all=False)
+    G = copy.deepcopy(G2).eval().requires_grad_(False).to(device)
 
     if resume:
         pkls_path = os.path.join(outdir, 'checkpoints')
@@ -114,27 +122,15 @@ def main(outdir, g_ckpt, e_ckpt,
         with dnnlib.util.open_url(resume_pkl_path) as fp:
             network = legacy.load_network_pkl(fp)
             E = network['E'].requires_grad_(False).to(device)
-            G = network['G'].requires_grad_(False).to(device)
+            # G = network['G'].requires_grad_(False).to(device)
             Sep_net = network['Sep_net'].requires_grad_(False).to(device)
     else:
-        print('Loading networks from "%s"...' % g_ckpt)
-        with dnnlib.util.open_url(g_ckpt) as fp:
-            network = legacy.load_network_pkl(fp)
-            G = network['G_ema'].requires_grad_(False).to(device)
-        from training.networks import Generator
-        from torch_utils import misc
-        with torch.no_grad():
-            # if 'insert_layer' not in G.init_kwargs.synthesis_kwargs:  # add new attributions
-            #     G.init_kwargs.synthesis_kwargs['insert_layer'] = insert_layer
-            G2 = Generator(*G.init_args, **G.init_kwargs).to(device)
-            misc.copy_params_and_buffers(G, G2, require_all=False)
-        G = copy.deepcopy(G2).eval().requires_grad_(False).to(device)
         from models.encoders.psp_encoders import GradualStyleEncoder1
         E = GradualStyleEncoder1(50, 3, G.mapping.num_ws, 'ir_se', which_c=which_c).to(
             device)  # num_layers, input_nc, n_styles,mode='ir
 
-        from training.networks import Separate_net
-        Sep_net = Separate_net(17).to(device)
+        from training.networks import Separate_net_2
+        Sep_net = Separate_net_2(17).to(device)
 
     params = list(E.parameters())
     params += list(Sep_net.parameters())
@@ -199,33 +195,35 @@ def main(outdir, g_ckpt, e_ckpt,
             camera_views = camera_matrices[2][:, :2].to(device)  # first two
             # print(camera_views)
             rec_ws, _ = E(img)
-            sep_ws, sep_mode = Sep_net(rec_ws)
-            camera_info = G.synthesis.get_camera(batch, device=device, mode=sep_mode)
+            sep_ws, sep_intr,sep_extr,sep_uv = Sep_net(rec_ws)
             sep_ws += ws_avg
             loss_dict['loss_ws'] = F.smooth_l1_loss(sep_ws, gt_w).mean() * lambda_w
-            loss_dict['loss_cm'] = F.smooth_l1_loss(sep_mode, camera_views).mean() * lambda_c
-            gen_img = G.get_final_output(styles=sep_ws, camera_matrices=camera_info)  #
-            # define loss
+            loss_dict['loss_cm'] = (F.smooth_l1_loss(sep_uv, camera_views).mean() +
+                                    F.smooth_l1_loss(sep_intr, camera_matrices[0]).mean() +
+                                    F.smooth_l1_loss(sep_extr, camera_matrices[1]).mean()
+                                    )* lambda_c
+            gen_img = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices)  #
             loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
         else:
 
             use_dataset = 1 if i%2==0 else 2
             if use_dataset==1:
-                # print("using dataset 1")
                 img, _, camera, _, gt_w = next(training_set_iterator)
                 img = img.to(device).to(torch.float32) / 127.5 - 1
                 gt_w = gt_w.to(device).to(torch.float32)
                 camera_matrices = get_camera_metrices(camera, device)
-                camera_views = camera_matrices[2][:,:2].to(device)  # first two
-
+                camera_views = camera_matrices[2][:, :2].to(device)  # first two
                 # print(camera_views)
                 rec_ws, _ = E(img)
-                sep_ws,sep_mode = Sep_net(rec_ws)
-                camera_info = G.synthesis.get_camera(batch, device=device, mode=sep_mode)
+                sep_ws, sep_intr, sep_extr, sep_uv = Sep_net(rec_ws)
                 sep_ws += ws_avg
                 loss_dict['loss_ws'] = F.smooth_l1_loss(sep_ws, gt_w).mean() * lambda_w
-                loss_dict['loss_cm'] = F.smooth_l1_loss(sep_mode, camera_views).mean() * lambda_c
-                gen_img = G.get_final_output(styles=sep_ws, camera_matrices= camera_info)  #
+                loss_dict['loss_cm'] = (F.smooth_l1_loss(sep_uv, camera_views).mean() +
+                                        F.smooth_l1_loss(sep_intr, camera_matrices[0]).mean() +
+                                        F.smooth_l1_loss(sep_extr, camera_matrices[1]).mean()
+                                        ) * lambda_c
+                gen_img = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices)  #
+                loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
             else:
                 # print("using dataset 2")
@@ -233,17 +231,18 @@ def main(outdir, g_ckpt, e_ckpt,
                 img = img.to(device).to(torch.float32) / 127.5 - 1
                 camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
                 camera_views[:,1]=0.5# first two
-                # camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
+                camera_matrices = G.synthesis.get_camera(batch, device=device, mode=camera_views)
 
                 rec_ws, _ = E(img)
-                sep_ws,sep_mode = Sep_net(rec_ws)
-                camera_info = G.synthesis.get_camera(batch, device=device, mode=sep_mode)
+                sep_ws,sep_intr, sep_extr, sep_uv = Sep_net(rec_ws)
                 sep_ws += ws_avg
                 loss_dict['loss_ws'] = torch.tensor(0.0).to(device)
-                loss_dict['loss_cm'] = F.smooth_l1_loss(sep_mode, camera_views).mean() * lambda_c
-                # camera_matrices = camera_info if which_camera=='mode' else (camera_mat,world_mat,camera_views,None)
-                gen_img = G.get_final_output(styles=sep_ws, camera_matrices=camera_info)  #
-            loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
+                loss_dict['loss_cm'] = (F.smooth_l1_loss(sep_uv, camera_views).mean() +
+                                        F.smooth_l1_loss(sep_intr, camera_matrices[0]).mean() +
+                                        F.smooth_l1_loss(sep_extr, camera_matrices[1]).mean()
+                                        ) * lambda_c
+                gen_img = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices)  #
+                loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
         # loss_dict['img1_l2'] = F.mse_loss(gen_img1, img_1) * lambda_l2
         # loss_dict['img2_l2'] = F.mse_loss(gen_img2, img_2) * lambda_l2
@@ -257,7 +256,7 @@ def main(outdir, g_ckpt, e_ckpt,
         pbar.set_description((desp))
 
 
-        if i%1 == 0:
+        if i % 100 ==0 or (i-1) %100 == 0:
             os.makedirs(f'{outdir}/sample', exist_ok=True)
             with torch.no_grad():
                 sample = torch.cat([img.detach(), gen_img.detach()])
@@ -275,7 +274,7 @@ def main(outdir, g_ckpt, e_ckpt,
             snapshot_pkl = os.path.join(f'{outdir}/checkpoints/', f'network-snapshot-{i // 1000:06d}.pkl')
             snapshot_data = {}  # dict(training_set_kwargs=dict(training_set_kwargs))
             # snapshot_data2 = {}  # dict(training_set_kwargs=dict(training_set_kwargs))
-            modules = [('G', G), ('E', E),('Sep_net',Sep_net)]
+            modules = [('E', E),('Sep_net',Sep_net)]
             for name, module in modules:
                 if module is not None:
                     module = copy.deepcopy(module).eval().requires_grad_(False).cpu()

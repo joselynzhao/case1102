@@ -182,12 +182,13 @@ def main(outdir, g_ckpt,
             camera_views = camera_matrices[2][:,:2].to(device)  # first two
             # print(camera_views)
             rec_ws, rec_cm= E(img)
+            camera_info = G.synthesis.get_camera(batch, device=device, mode=rec_cm)
             rec_ws += ws_avg
             loss_dict['loss_ws'] = F.smooth_l1_loss(rec_ws, gt_w).mean() * lambda_w
             loss_dict['loss_cm'] = F.smooth_l1_loss(rec_cm, camera_views).mean() * lambda_c
 
             # camera_info = G.synthesis.get_camera(batch,device,mode=rec_cm)
-            gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_matrices)
+            gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_info)
             # define loss
             loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
         else:
@@ -200,12 +201,13 @@ def main(outdir, g_ckpt,
                 camera_views = camera_matrices[2][:, :2].to(device)  # first two
                 # print(camera_views)
                 rec_ws, rec_cm = E(img)
+                camera_info = G.synthesis.get_camera(batch, device=device, mode=rec_cm)
                 rec_ws += ws_avg
                 loss_dict['loss_ws'] = F.smooth_l1_loss(rec_ws, gt_w).mean() * lambda_w
                 loss_dict['loss_cm'] = F.smooth_l1_loss(rec_cm, camera_views).mean() * lambda_c
 
                 # camera_info = G.synthesis.get_camera(batch,device,mode=rec_cm)
-                gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_matrices)
+                gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_info)
                 # define loss
                 loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
             else:
@@ -213,8 +215,9 @@ def main(outdir, g_ckpt,
                 img = img.to(device).to(torch.float32) / 127.5 - 1
                 camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
                 camera_views[:, 1] = 0.5  # first two
-                camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
+                # camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
                 rec_ws, rec_cm = E(img)
+                camera_info = G.synthesis.get_camera(batch, device=device, mode=rec_cm)
                 rec_ws += ws_avg
                 loss_dict['loss_ws'] = torch.tensor(0.0).to(device)
                 loss_dict['loss_cm'] = F.smooth_l1_loss(rec_cm, camera_views).mean() * lambda_c
@@ -230,7 +233,7 @@ def main(outdir, g_ckpt,
         desp = '\t'.join([f'{name}: {loss_dict[name].item():.4f}' for name in loss_dict])
         pbar.set_description((desp))
 
-        if i % 100 == 0:
+        if i % 1 == 0:
             os.makedirs(f'{outdir}/sample', exist_ok=True)
             with torch.no_grad():
                 sample = torch.cat([img.detach(), gen_img.detach()])

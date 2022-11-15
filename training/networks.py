@@ -1718,5 +1718,77 @@ class Separate_net(torch.nn.Module):
         # print("out_mode", out_mode.shape)
         return out_w,out_mode
 
+@persistence.persistent_class
+class Separate_net_2(torch.nn.Module):  # for case1103_2
+    def __init__(self, n_w):
+        super().__init__()
+        self.ws_in = nn.ModuleList()
+        self.ws_out = nn.ModuleList()
+        # self.mode_out = nn.ModuleList()
+        for i in range(n_w):
+            self.ws_in.append(self.get_model_w_in())
+            self.ws_out.append(self.get_model_w_out())
+            # self.mode_out.append(self.get_model_mode())
+
+        self.model_mode = torch.nn.Sequential(
+            torch.nn.Linear(8704, 4352),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(4352, 2176),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(2176, 1088),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(1088, 544),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(544, 272),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(272, 136),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(136, 68),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(68, 34)
+        )
+
+    def get_model_w_in(self):
+        model_w = torch.nn.Sequential(
+            torch.nn.Linear(512, 768),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(768, 1024)
+        )
+        return model_w
+
+    def get_model_w_out(self):
+        model_w_out = torch.nn.Sequential(
+            torch.nn.Linear(512, 512),
+            torch.nn.LeakyReLU(inplace=True),
+            torch.nn.Linear(512, 512)
+        )
+        return model_w_out
+
+    def forward(self, w):
+        batch, n_dim, z_dim = w.shape
+        w = rearrange(w, 'b n z -> n b z')
+        ww = []
+        for i in range(n_dim):
+            ww.append(self.ws_in[i](w[i]))
+        ww = torch.stack(ww, dim=0)  # 17 , b , 1024
+        ws = ww[:, :, :z_dim]  # 17 ,b ,512
+        mode = ww[:, :, z_dim:]  # 17 ,b ,512
+        out_w = []
+        for i in range(n_dim):
+            out_w.append(self.ws_out[i](ws[i]))  # 512 - 512
+        out_w = torch.stack(out_w, dim=0)  # 17, b, 512
+        out_w = rearrange(out_w, "n b z -> b n z")  # b 17 512
+        mode = rearrange(mode,'n b z -> b (n z)') # b 17x512
+        mode = self.model_mode(mode) # b 34
+        intr = mode[:,:16]
+        extr = mode[:,16:32]
+        uv = mode[:,-2:]
+        intr = rearrange(intr,'b (m k) -> b m k', k=4)
+        extr = rearrange(extr,'b (m k) -> b m k', k=4)
+        # print("intr", intr.shape)
+        # print("extr", extr.shape)
+        # print("uv", uv.shape)
+        return out_w,intr,extr,uv
+
 
 
