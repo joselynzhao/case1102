@@ -149,6 +149,7 @@ def generate_images(
     print('Image shape:', training_set.image_shape)
 
     # seed_list = [11]
+    w = None
     for idx in range(6):
         ws_avg = G.mapping.w_avg[None, None, :]
         info = next(training_set_iterator)
@@ -175,8 +176,12 @@ def generate_images(
             gen_img_MappingNet = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)
             show_list.append(gen_img_MappingNet.detach())
         if testing_type==3:
-            sep_ws, sep_mode = Sep_net(rec_ws)
+            sep_out = Sep_net(rec_ws)  # return 2 or 4
+            sep_ws = sep_out[0]
+            camera_matrices_sep = sep_out[1],sep_out[2],sep_out[3],None
             sep_ws += ws_avg
+            gen_img_Sep = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices_sep)
+            show_list.append(gen_img_Sep.detach())
             gen_img_Sep = G.get_final_output(styles=sep_ws, camera_matrices=camera_matrices)
             show_list.append(gen_img_Sep.detach())
         # if w is not None:

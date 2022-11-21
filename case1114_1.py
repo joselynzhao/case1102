@@ -47,13 +47,17 @@ data_path = {
     'hpcl':
         {
             'data1':'../dataset/car_dataset_trunc075/images',
-            'data2':'../dataset/mvmv/training_set/images'
+            'data2':'../dataset/mvmv/training_set/images',
+            "data3": "../dataset/compcars/case1103_2_02/images",
+            "data4": "../dataset/compcars/case1103_2_01/images"
 
         },
     'jdt':
         {
             "data1": '/workspace/datasets/car_zj/images',
-            "data2": '../dataset/mvmv/training_set/images'
+            "data2": '../dataset/mvmv/training_set/images',
+            "data3": "../dataset/compcars/case1103_2_02/images",
+            "data4": "../dataset/compcars/case1103_2_01/images"
         }
 }
 
@@ -69,7 +73,7 @@ data_path = {
 @click.option("--lambda_w", type=float, default=1.0)
 @click.option("--lambda_c", type=float, default=1.0)
 @click.option("--lambda_img", type=float, default=1.0)
-@click.option("--which_data", type=int, default=1)  # 1: trunc075 # 2:trunc075+mvmc
+@click.option("--which_data", type=int, default=1)  # 1: trunc075 # 2:trunc075+mvmc  3：trunc075+ compcars/3  4:trunc075+compars/4
 @click.option("--which_c", type=str, default='p2')  # encoder attr
 @click.option("--outdir", type=str, default='./output/case1114_1/debug')
 @click.option("--resume", type=bool, default=False)  # true则进行resume
@@ -82,6 +86,8 @@ def main(outdir, g_ckpt,
     # print(options_list)
     data1 = data_path[which_server]['data1']
     data2 = data_path[which_server]['data2']
+    data3 = data_path[which_server]['data3']
+    data4 = data_path[which_server]['data4']
     random_seed = 25
     np.random.seed(random_seed)
     # torch.autograd.set_detect_anomaly(True)
@@ -130,6 +136,7 @@ def main(outdir, g_ckpt,
     # load the dataset
     # data_dir = os.path.join(data, 'images')
     from torch_utils import misc
+    print("loading dataest from:", data1)
     training_set_kwargs = dict(class_name='training.dataset.ImageFolderDataset_psp_case1', path=data1, use_labels=False,
                                xflip=True)
     data_loader_kwargs = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
@@ -142,8 +149,15 @@ def main(outdir, g_ckpt,
     print('Num images: ', len(training_set))
     print('Image shape:', training_set.image_shape)
 
-    if which_data == 2:
-        training_set_kwargs2 = dict(class_name='training.dataset.ImageFolderDataset_mvmc_zj', path=data2, use_labels=False,
+    if which_data == 2 or which_data==3 or which_data==4:
+        if which_data==2:
+            class_name = 'training.dataset.ImageFolderDataset_mvmc_zj'
+            data2_path = data2
+        else:
+            class_name ='training.dataset.ImageFolderDataset_compcars'
+            data2_path = data3 if which_data ==3 else data4
+        print("loading dataest from:" ,data2_path)
+        training_set_kwargs2 = dict(class_name=class_name, path=data2_path, use_labels=False,
                                     xflip=True)
         data_loader_kwargs2 = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
         training_set2 = dnnlib.util.construct_class_by_name(**training_set_kwargs2)
@@ -154,6 +168,8 @@ def main(outdir, g_ckpt,
         training_set_iterator2 = iter(training_set_iterator2)
         print('Num images: ', len(training_set2))
         print('Image shape:', training_set2.image_shape)
+
+
 
     start_iter = 0
     if resume:
@@ -200,16 +216,21 @@ def main(outdir, g_ckpt,
                 rec_ws += ws_avg
                 gen_img = G.get_final_output(styles=rec_ws, camera_matrices= camera_matrices)  #
                 loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
-            else:
-                img, _, camera, _ = next(training_set_iterator2)
-                img = img.to(device).to(torch.float32) / 127.5 - 1
-                camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
-                camera_views[:, 1] = 0.5  # first two
-                camera_info = G.synthesis.get_camera(batch, device=device, mode=camera_views)
+            else:  # 要考虑要用2 还是 3
+                if which_data ==2:
+                    img, _, camera, _ = next(training_set_iterator2)
+                    img = img.to(device).to(torch.float32) / 127.5 - 1
+                    camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
+                    camera_views[:, 1] = 0.5  # first two
+                    camera_matrices = G.synthesis.get_camera(batch, device=device, mode=camera_views)
+                else: # which_data = 3 or 4
+                    img, camera = next(training_set_iterator2)
+                    img = img.to(device).to(torch.float32) / 127.5 - 1
+                    camera_matrices = get_camera_metrices(camera, device)
 
                 rec_ws, _ = E(img)
                 rec_ws += ws_avg
-                gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_info)  #
+                gen_img = G.get_final_output(styles=rec_ws, camera_matrices=camera_matrices)  #
                 loss_dict['img1_lpips'] = loss_fn_alex(img.cpu(), gen_img.cpu()).mean().to(device) * lambda_img
 
         E_loss = sum([loss_dict[l] for l in loss_dict])

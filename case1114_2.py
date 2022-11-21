@@ -135,6 +135,7 @@ def main(outdir, g_ckpt,
     # load the dataset
     # data_dir = os.path.join(data, 'images')
     from torch_utils import misc
+    print("loading dataset trunc075")
     training_set_kwargs = dict(class_name='training.dataset.ImageFolderDataset_psp_case1', path=data1, use_labels=False,
                                xflip=True)
     data_loader_kwargs = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
@@ -148,6 +149,7 @@ def main(outdir, g_ckpt,
     print('Image shape:', training_set.image_shape)
 
     if which_data == 2:
+        print("loading dataset mvmc")
         training_set_kwargs2 = dict(class_name='training.dataset.ImageFolderDataset_mvmc_zj', path=data2, use_labels=False,
                                     xflip=True)
         data_loader_kwargs2 = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
@@ -187,7 +189,7 @@ def main(outdir, g_ckpt,
             camera_views = camera_matrices[2][:,:2].to(device)  # first two
             # print(camera_views)
             rec_ws, _ = E(img)
-            # gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)  #
+            gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)  #
             mapping_w = M(rec_ws.detach(), camera_views)
             mapping_w += ws_avg
             gen_img_w = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)  #
@@ -204,7 +206,7 @@ def main(outdir, g_ckpt,
                 camera_views = camera_matrices[2][:, :2].to(device)  # first two
                 # print(camera_views)
                 rec_ws, _ = E(img)
-                # gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)  #
+                gen_img = G.get_final_output(styles=rec_ws+ws_avg, camera_matrices=camera_matrices)  #
                 mapping_w = M(rec_ws.detach(), camera_views)
                 mapping_w += ws_avg
                 gen_img_w = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)  #
@@ -218,6 +220,7 @@ def main(outdir, g_ckpt,
                 camera_matrices = G.synthesis.get_camera(batch, device=device, mode=camera_views)
 
                 rec_ws, _ = E(img)
+                gen_img = G.get_final_output(styles=rec_ws + ws_avg, camera_matrices=camera_matrices)
                 mapping_w = M(rec_ws.detach(), camera_views)
                 mapping_w += ws_avg
                 gen_img_w = G.get_final_output(styles=mapping_w, camera_matrices=camera_matrices)  #
@@ -235,7 +238,7 @@ def main(outdir, g_ckpt,
         if i % 100 == 0 or (i-1) % 100 == 0:
             os.makedirs(f'{outdir}/sample', exist_ok=True)
             with torch.no_grad():
-                sample = torch.cat([img.detach(), gen_img_w.detach()])
+                sample = torch.cat([img.detach(),gen_img.detach(), gen_img_w.detach()])
                 utils.save_image(
                     sample,
                     f"{outdir}/sample/{str(i).zfill(6)}.png",
