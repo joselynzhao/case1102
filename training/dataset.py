@@ -773,3 +773,264 @@ class ImageFolderDataset_compcars(Dataset):
         training_set_iterator = DALIGenericIterator([dali_pipe], ['img', 'label'])
         for data in training_set_iterator:
             yield data[0]['img'], data[0]['label']
+
+
+#----------------------------------------------------------------------------
+import math
+import random
+
+from PIL import Image
+import blobfile as bf
+# from mpi4py import MPI
+import numpy as np
+from torch.utils.data import DataLoader, Dataset
+import pandas as pd
+from guided_diffusion.tokenizer.bpe import get_encoder
+class ImageFolderDataset_web(Dataset):
+    def __init__(self,
+                 path,  # Path to directory or zip.
+                 resolution=None,  # Ensure specific resolution, None = highest available.
+                 **super_kwargs,  # Additional arguments for the Dataset base class.
+                 ):
+
+        self._path = path  # 直接给到image所在目录
+        path_root = os.path.abspath(os.path.join(path, '..'))
+        self.camera_path = os.path.join(path_root, 'case1103_2_02/camera_metrics')
+        self.w_path = os.path.join(path_root, 'ws')
+        df = pd.read_csv('/workspace/datasets/web_car/att_data.csv')
+        img_key = 'images'
+        caption_key = 'captions'
+        self.images = df[img_key].tolist()
+        self.captions = df[caption_key].tolist()
+        self.colors = df['color'].tolist()
+        self.views = df['view'].tolist()
+        self.types = df['type'].tolist()
+        self.tokenizer = get_encoder()
+        self.random_flip = True
+
+        self._zipfile = None
+
+        if os.path.isdir(self._path):
+            self._type = 'dir'
+            self._all_fnames = {os.path.relpath(os.path.join(root, fname), start=self._path) for root, _dirs, files in
+                                os.walk(self._path) for fname in files}
+        elif self._file_ext(self._path) == '.zip':
+            self._type = 'zip'
+            self._all_fnames = set(self._get_zipfile().namelist())
+        else:
+            raise IOError('Path must point to a directory or zip')
+
+        PIL.Image.init()
+        self._image_fnames = sorted(fname for fname in self._all_fnames if self._file_ext(fname) in PIL.Image.EXTENSION)
+        if len(self._image_fnames) == 0:
+            raise IOError('No image files found in the specified path')
+
+        name = os.path.splitext(os.path.basename(self._path))[0]
+        print(name)
+        print(len(self._image_fnames))
+        raw_shape = [len(self._image_fnames)]+ list(self._load_raw_image(0).shape)
+        if resolution is not None:
+            raw_shape[2] = raw_shape[3] = resolution
+        # if resolution is not None and (raw_shape[2] != resolution or raw_shape[3] != resolution):
+        #     raise IOError('Image files do not match the specified resolution')
+        super().__init__(name=name, raw_shape=raw_shape, **super_kwargs)
+
+    @staticmethod
+    def _file_ext(fname):
+        return os.path.splitext(fname)[1].lower()
+
+    def _get_zipfile(self):
+        assert self._type == 'zip'
+        if self._zipfile is None:
+            self._zipfile = zipfile.ZipFile(self._path)
+        return self._zipfile
+
+    def _open_file(self, fname):
+        if self._type == 'dir':
+            return open(os.path.join(self._path, fname), 'rb')
+        if self._type == 'zip':
+            return self._get_zipfile().open(fname, 'r')
+        return None
+
+    def close(self):
+        try:
+            if self._zipfile is not None:
+                self._zipfile.close()
+        finally:
+            self._zipfile = None
+
+    def __getstate__(self):
+        return dict(super().__getstate__(), _zipfile=None)
+
+    def __getitem__(self, idx):
+        try:
+            with bf.BlobFile(os.path.join(self._path,str(self.images[idx])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = idx
+        except:
+            with bf.BlobFile(os.path.join(self._path,str(self.images[0])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = 0
+        pil_image = pil_image.convert("RGB")
+
+        pil_image = pil_image.resize((256,256), resample=Image.BICUBIC)
+        arr = np.array(pil_image)
+
+        if self.random_flip and random.random() < 0.5:
+            arr = arr[:, ::-1]
+        #print('hh')
+        image = arr.astype(np.float32) / 127.5 - 1
+        image = np.transpose(image, [2, 0, 1])
+        #images = self.transforms(img)#Image.open("/public/data0/MULT/datasets/web_car/data/"+str(self.images[idx])))
+        text = self.colors[idx_c]+' '+self.views[idx_c]+' '+self.types[idx_c]+' '+self.captions[idx_c]
+        tokens = self.tokenizer.encode(text)
+        tokens, mask = self.tokenizer.padded_tokens_and_mask(tokens, 128)
+        texts = dict(tokens=np.array(tokens), mask=np.array(mask))
+        print(self.images[idx_c])
+        camera = '{}/{}.npz'.format(self.camera_path, self.images[idx_c].split('.')[0])
+        camera = np.load(camera)
+
+        return image,camera,texts
+
+    def _load_raw_image(self, idx):
+        try:
+            with bf.BlobFile(os.path.join(self._path, str(self.images[idx])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = idx
+        except:
+            with bf.BlobFile(os.path.join(self._path, str(self.images[0])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = 0
+        pil_image = pil_image.convert("RGB")
+
+        pil_image = pil_image.resize((256, 256), resample=Image.BICUBIC)
+        arr = np.array(pil_image)
+
+        if self.random_flip and random.random() < 0.5:
+            arr = arr[:, ::-1]
+        # print('hh')
+        image = arr.astype(np.float32) / 127.5 - 1
+        image = np.transpose(image, [2, 0, 1])
+        return image
+
+    def _load_raw_labels(self):
+        fname = 'dataset.json'
+        if fname not in self._all_fnames:
+            return None
+        with self._open_file(fname) as f:
+            labels = json.load(f)['labels']
+        if labels is None:
+            return None
+        labels = dict(labels)
+        labels = [labels[fname.replace('\\', '/')] for fname in self._image_fnames]
+        labels = np.array(labels)
+        labels = labels.astype({1: np.int64, 2: np.float32}[labels.ndim])
+        return labels
+
+    def get_dali_dataloader(self, batch_size, world_size, rank, gpu):  # TODO
+        from nvidia.dali import pipeline_def, Pipeline
+        import nvidia.dali.fn as fn
+        import nvidia.dali.types as types
+        from nvidia.dali.plugin.pytorch import DALIGenericIterator
+
+        @pipeline_def
+        def pipeline():
+            jpegs, _ = fn.readers.file(
+                file_root=self._path,
+                files=list(self._all_fnames),
+                random_shuffle=True,
+                shard_id=rank,
+                num_shards=world_size,
+                name='reader')
+            images = fn.decoders.image(jpegs, device='mixed')
+            mirror = fn.random.coin_flip(probability=0.5) if self.xflip else False
+            images = fn.crop_mirror_normalize(
+                images.gpu(), output_layout="CHW", dtype=types.UINT8, mirror=mirror)
+            labels = np.zeros([1, 0], dtype=np.float32)
+            return images, labels
+
+        dali_pipe = pipeline(batch_size=batch_size // world_size, num_threads=2, device_id=gpu)
+        dali_pipe.build()
+        training_set_iterator = DALIGenericIterator([dali_pipe], ['img', 'label'])
+        for data in training_set_iterator:
+            yield data[0]['img'], data[0]['label']
+
+
+
+#
+
+class ImageFolderDataset_web2(Dataset):
+    def __init__(
+        self,
+        resolution,
+        path,
+        classes=None,
+        shard=0,
+        num_shards=1,
+        random_crop=False,
+        random_flip=True,
+    ):
+        super().__init__()
+        self.resolution = resolution
+        self._path = path
+        path_root = os.path.abspath(os.path.join(path, '..'))
+        self.camera_path = os.path.join(path_root, 'case1103_2_02_2/camera_metrics')
+        self.w_path = os.path.join(path_root, 'ws')
+
+        # self.local_images = image_paths[shard:][::num_shards]
+        # self.local_classes = None if classes is None else classes[shard:][::num_shards]
+        # self.random_crop = random_crop
+        self.random_flip = random_flip
+        df = pd.read_csv('/workspace/datasets/web_car/att_data.csv')
+        img_key = 'images'
+        caption_key = 'captions'
+        self.images = df[img_key].tolist()
+        self.captions = df[caption_key].tolist()
+        self.colors = df['color'].tolist()
+        self.views = df['view'].tolist()
+        self.types = df['type'].tolist()
+        self.tokenizer = get_encoder()
+
+    def __len__(self):
+        return len(self.captions)
+    def __getitem__(self, idx):
+        try:
+            with bf.BlobFile(os.path.join(self._path,str(self.images[idx])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = idx
+        except:
+            with bf.BlobFile(os.path.join(self._path,str(self.images[0])), "rb") as f:
+                pil_image = Image.open(f)
+                pil_image.load()
+                idx_c = 0
+        pil_image = pil_image.convert("RGB")
+
+        pil_image = pil_image.resize((self.resolution, self.resolution), resample=Image.BICUBIC)
+        arr = np.array(pil_image)
+
+
+#        if self.random_crop:
+#            arr = random_crop_arr(pil_image, self.resolution)
+#        else:
+#            arr = center_crop_arr(pil_image, self.resolution)
+
+        if self.random_flip and random.random() < 0.5:
+            arr = arr[:, ::-1]
+        #print('hh')
+        image = arr.astype(np.float32) / 127.5 - 1
+        image = np.transpose(image, [2, 0, 1])
+        #images = self.transforms(img)#Image.open("/public/data0/MULT/datasets/web_car/data/"+str(self.images[idx])))
+        text = self.colors[idx_c]+' '+self.views[idx_c]+' '+self.types[idx_c]+' '+self.captions[idx_c]
+        tokens = self.tokenizer.encode(text)
+        tokens, mask = self.tokenizer.padded_tokens_and_mask(tokens, 128)
+        texts = dict(tokens=np.array(tokens), mask=np.array(mask))
+
+        # print(self.images[idx_c])
+        camera = '{}/{}.npz'.format(self.camera_path, self.images[idx_c].split('.')[0])
+        camera = np.load(camera)
+        return image,camera,text

@@ -5,7 +5,7 @@
 from random import random
 from dnnlib import camera
 import os
-# os.environ["CUDA_VISIBLE_DEVICES"]='0'
+# os.environ["CUDA_VISIBLE_DEVICES"]='2'
 import numpy as np
 import torch
 import copy

@@ -41,16 +41,23 @@ torch.cuda._initialized = True
 # ----------------------------------------------------------------------------
 os.environ['PYOPENGL_PLATFORM'] = 'egl'
 
-data1 = {
-    'hpcl': '../dataset/car_dataset_trunc075/trunc075/images',
-    'jdt': '/workspace/datasets/car_zj/trunc075/images'
-}
+data_path = {
+    'hpcl':
+        {
+            'data1':'../dataset/car_dataset_trunc075/images',
+            'data2':'../dataset/mvmv/training_set/images',
+            "data3": "../dataset/compcars/case1103_2_02/images",
+            "data4": "../dataset/compcars/case1103_2_01/images"
 
-data2 = {
-    'hpcl': '../dataset/mvmv/testing_set/images',
-    'jdt': '../dataset/mvmv/testing_set/images'
+        },
+    'jdt':
+        {
+            "data1": '/workspace/datasets/car_zj/images',
+            "data2": '../dataset/mvmv/training_set/images',
+            "data3": "../dataset/compcars/case1103_2_02/images",
+            "data4": "../dataset/compcars/case1103_2_01/images"
+        }
 }
-
 
 # 不需要指定任何参数，只需要修改待测试encoder的列表，主要调整seed（选择测试样列）
 @click.command()
@@ -60,7 +67,7 @@ data2 = {
 @click.option('--encoder', 'encoder_pkl', help='Network pickle filename',
               default='./output/case1020_2/debug/checkpoints/network-snapshot-000000.pkl')
 @click.option("--which_server", type=str, default='jdt')
-@click.option("--testing_set", type=int, default=1)  # 1 : trun075  2: mvmc
+@click.option("--testing_set", type=int, default=1)  # 1 : trun075  2: mvmc  3 COMPCARS
 # @click.option('--insert_layer',type=int, default=3)
 # @click.option('--group_name',type=str, default='01')
 @click.option("--batch", type=int, default=8)
@@ -84,8 +91,9 @@ def generate_images(
         class_idx: Optional[int],
         random_seed: int,
         which_server: str):
-    data_path = data1 if testing_set == 1 else data2
-    data = data_path[which_server]
+
+    data_name = f'data{testing_set}'
+    data = data_path[which_server][data_name]
     np.random.seed(random_seed)
 
     num_gpus = 1  # 自动获取显卡数量
@@ -94,8 +102,14 @@ def generate_images(
     # device = torch.device('cuda')
 
     # store_dir = os.path.join(f'./output/test_encoders/In_testset/Group_{group_name}')  # 用于服务器测试
-    data_name = 'trunc075' if testing_set == 1 else "mvmc"
+    if testing_set ==1:
+        data_name = 'stylenerf_gan'
+    elif testing_set == 2:
+        data_name = 'mvmc'
+    else:
+        data_name = 'compcars'
     store_dir = f'./output/test_encoders/{data_name}'
+    print("the testing result will be store in ",store_dir)
     os.makedirs(store_dir, exist_ok=True)
 
     print('Loading networks from "%s"...' % g_ckpt)
@@ -135,7 +149,12 @@ def generate_images(
     np.random.seed(random_seed)
     # load the dataset
     # data_dir = os.path.join(data, 'images')
-    dataclass_name = 'training.dataset.ImageFolderDataset_psp_case1' if testing_set == 1 else 'training.dataset.ImageFolderDataset_mvmc_zj'
+    testing_set_name = {
+        1:  'training.dataset.ImageFolderDataset_psp_case1',
+        2: 'training.dataset.ImageFolderDataset_mvmc_zj',
+        3: 'training.dataset.ImageFolderDataset_compcars'
+    }
+    dataclass_name = testing_set_name[testing_set]
     training_set_kwargs = dict(class_name=dataclass_name, path=data, use_labels=False,
                                xflip=True)
     data_loader_kwargs = dict(pin_memory=True, num_workers=1, prefetch_factor=1)
@@ -154,7 +173,9 @@ def generate_images(
         ws_avg = G.mapping.w_avg[None, None, :]
         info = next(training_set_iterator)
         img = info[0]
-        camera = info[2]
+        if len(info)==2:
+            camera=info[1]
+        else: camera = info[2]
         img = img.to(device).to(torch.float32) / 127.5 - 1
         if testing_set == 2:
             camera_views = camera['camera_2'][:, :2].to(device).to(torch.float32)
@@ -164,7 +185,8 @@ def generate_images(
         else:
             camera_matrices = get_camera_metrices(camera, device)
             camera_views = camera_matrices[2][:, :2].to(device)
-            w = info[4].to(device)
+            if len(info)==5:
+                w = info[4].to(device)  # 不需要在测试w
             # w +=ws_avg
 
         rec_ws, _ = E(img)

@@ -233,7 +233,7 @@ def main(outdir, g_ckpt,
         desp = '\t'.join([f'{name}: {loss_dict[name].item():.4f}' for name in loss_dict])
         pbar.set_description((desp))
 
-        if i % 1 == 0:
+        if i % 100 == 0:
             os.makedirs(f'{outdir}/sample', exist_ok=True)
             with torch.no_grad():
                 sample = torch.cat([img.detach(), gen_img.detach()])
